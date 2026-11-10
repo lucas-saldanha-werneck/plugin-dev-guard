@@ -108,7 +108,7 @@ class RealTargets(unittest.TestCase):
         self.assertEqual(t("FOO=1 timeout 5 nice -n 3 rm -f a"), [p(CWD, "a")])
 
     def test_env_chdir(self):
-        self.assertEqual(t("env -C /a BAR=2 touch b"), [p("/a/b")])
+        self.assertEqual(t("env -C /opt BAR=2 touch b"), [p("/opt/b")])
 
     def test_bash_c(self):
         self.assertEqual(t("bash -c 'echo x >> %s/f'" % CACHE), [p(CACHED, "f")])
@@ -141,8 +141,8 @@ class RealTargets(unittest.TestCase):
         self.assertEqual(t("find %s -name '*.py' -exec sed -i s/a/b/ {} +" % CACHE), [CACHED])
 
     def test_curl_dd_tar(self):
-        self.assertEqual(t("curl -sL -o o.json https://x/y; dd if=a of=b; tar -xzf a.tgz -C /d"),
-                         [p(CWD, "o.json"), p(CWD, "b"), p("/d")])
+        self.assertEqual(t("curl -sL -o o.json https://x/y; dd if=a of=b; tar -xzf a.tgz -C /dest"),
+                         [p(CWD, "o.json"), p(CWD, "b"), p("/dest")])
 
     def test_home_variable(self):
         self.assertEqual(t('echo x > "$HOME/.claude/plugins/cache/mkt/tool/1.0.0/f"'), [p(CACHED, "f")])
