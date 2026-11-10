@@ -1,0 +1,23 @@
+{
+  "_doc": {
+    "about": "Your plugin-dev-guard settings. Plugin updates never touch this file. Every value below is the default, so this file changes nothing until you edit it. Keys that start with _ are ignored.",
+    "owner": "Your GitHub account. With marketplaces = \"auto\", a marketplace whose GitHub repo belongs to this account counts as yours. Also used by plugin-dev-check with scan_dirs. Example: \"octocat\"",
+    "marketplaces": "Which marketplaces are yours: \"auto\" (every marketplace added from a local folder, plus the ones on GitHub owned by owner) or a list of names. Example: [\"my-plugins\"]",
+    "guard": "\"all\" stops edits to the installed copy of any plugin; \"mine\" only to plugins from your marketplaces (and your install_dirs).",
+    "sources": "Where your source repos live: a folder that holds them (or a list of folders), or a map of plugin or marketplace name to repo path. Example: \"~/code/plugins\" or {\"my-plugin\": \"~/code/my-plugin\"}",
+    "install_dirs": "Other installed copies to protect, outside the plugins folder: a map of name to path, or a list of paths (name = folder name without -src). Example: {\"my-cli\": \"~/.local/share/my-cli-src\"}",
+    "exempt": "Paths inside an install dir that may be written (runtime data, logs). Example: [\"~/.local/share/my-cli-src/logs\"]",
+    "pass_minutes": "How long the pass file lets edits through after the user approves one.",
+    "scan_dirs": "plugin-dev-check only: folders searched for repos of owner that are outside sources. Example: [\"~/code\"]",
+    "tip": "A line added at the end of the message Claude sees when an edit is stopped. Example: \"Then add a to-do to port the change.\""
+  },
+  "owner": "",
+  "marketplaces": "auto",
+  "guard": "all",
+  "sources": [],
+  "install_dirs": {},
+  "exempt": [],
+  "pass_minutes": 30,
+  "scan_dirs": [],
+  "tip": ""
+}

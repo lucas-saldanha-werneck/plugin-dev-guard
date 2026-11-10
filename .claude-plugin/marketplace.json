@@ -1,0 +1,15 @@
+{
+  "name": "plugin-dev-guard",
+  "description": "Keeps plugin changes in the source repo, not in the installed copy.",
+  "owner": {
+    "name": "Lucas Saldanha Werneck",
+    "url": "https://github.com/lucas-saldanha-werneck"
+  },
+  "plugins": [
+    {
+      "name": "plugin-dev-guard",
+      "source": "./",
+      "description": "Stops Claude from editing the installed copy of a plugin and points it to the source repo (or a fork and PR); checks repos against installed copies."
+    }
+  ]
+}

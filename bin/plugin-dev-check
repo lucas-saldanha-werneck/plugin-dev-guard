@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""plugin-dev-check: your plugin source repos next to their installed copies.
+
+For each source repo (setting `sources`): branch, uncommitted files, commits not pushed,
+the installed copy (plugin cache, marketplace clone or install dir) and whether it is
+behind the repo's default branch. Also lists repos of `owner` found under `scan_dirs`
+outside your sources, and sync-conflict files inside .git folders.
+
+Usage: plugin-dev-check [--fetch] [--md]
+  --fetch  run `git fetch` in each repo first
+  --md     print a Markdown table
+Exit 0 = nothing to fix, 1 = something listed under "Fix".
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "hooks"))
+import pdg  # noqa: E402
+
+git = pdg.git
+
+
+def short(p):
+    h = pdg.home()
+    return "~" + p[len(h):].replace(os.sep, "/") if p.startswith(h) else p
+
+
+def default_sha(repo):
+    ref = git(repo, "rev-parse", "--abbrev-ref", "origin/HEAD")
+    for r in ([ref] if ref and ref != "origin/HEAD" else []) + ["origin/main", "origin/master", "main", "master"]:
+        sha = git(repo, "rev-parse", "--verify", "-q", r + "^{commit}")
+        if sha:
+            return sha
+    return ""
+
+
+def dirty_count(d, tracked_only=False):
+    args = ["status", "--porcelain"] + (["--untracked-files=no"] if tracked_only else [])
+    return len([x for x in git(d, *args).splitlines() if x.strip()])
+
+
+def main(argv):
+    fetch, md = "--fetch" in argv, "--md" in argv
+    if "-h" in argv or "--help" in argv:
+        print(__doc__.strip())
+        return 0
+    pdg.seed_config()
+    cfg = pdg.load_config()
+    known = pdg.known_marketplaces()
+    installed = pdg.installed_plugins()
+    mine = pdg.mine(cfg, known)
+    idirs = pdg.install_dirs(cfg)
+    repos = pdg.source_repos(cfg)
+    rows, fix = [], []
+    if not repos:
+        print("No source repos found. Set \"sources\" in %s (a folder that holds your repos, "
+              "or a map of name to path)." % short(pdg.config_path()))
+    for name, repo in repos:
+        if fetch:
+            git(repo, "fetch", "-q")
+        branch = git(repo, "branch", "--show-current") or "?"
+        dirty = dirty_count(repo)
+        unpushed = git(repo, "rev-list", "--count", "@{u}..HEAD") if git(repo, "rev-parse", "@{u}") else "no upstream"
+        main_sha = default_sha(repo)
+        inst, state = "-", ""
+        pn = pdg.plugin_name(repo)
+        cat = pdg.catalog(repo)
+        hits = [(k, v[0]) for k, v in installed.items()
+                if pn and k.split("@")[0] == pn and isinstance(v, list) and v and isinstance(v[0], dict)]
+        hits.sort(key=lambda kv: kv[0].split("@", 1)[-1] not in mine)
+        mname = cat.get("name")
+        msrc = (known.get(mname) or {}).get("source") or {} if mname else {}
+        if hits:
+            key, info = hits[0]
+            inst = "%s %s" % (key, info.get("version", "?"))
+            sha = info.get("gitCommitSha", "")
+            ipath = info.get("installPath", "")
+            ksrc = (known.get(key.split("@", 1)[-1]) or {}).get("source") or {}
+            in_cache = os.sep + "cache" + os.sep in os.path.normpath(ipath)
+            if ksrc.get("source") == "directory" and ksrc.get("path") and \
+                    pdg.real(ksrc["path"]) == pdg.real(repo):
+                state = "runs from repo (in place)"
+            elif not in_cache:
+                state = "runs from repo" if ipath and pdg.real(ipath) == pdg.real(repo) else "in place: %s" % short(ipath)
+            elif not sha:
+                state = "no sha recorded"
+            elif main_sha and sha != main_sha:
+                behind = git(repo, "rev-list", "--count", "%s..%s" % (sha, main_sha))
+                state = "behind main by %s" % (behind or "?")
+                fix.append("%s: installed copy %s is behind main %s (bump the version, then "
+                           "`claude plugin marketplace update %s` and `claude plugin update %s`)"
+                           % (name, sha[:7], main_sha[:7], key.split("@", 1)[-1], key))
+            else:
+                state = "= main"
+        elif mname and mname in known and msrc.get("source") != "directory" and \
+                pdg.marketplace_dir(mname, known) and \
+                os.path.exists(os.path.join(pdg.marketplace_dir(mname, known), ".git")):
+            d = pdg.marketplace_dir(mname, known)
+            inst = "catalog %s" % mname
+            isha = git(d, "rev-parse", "HEAD")
+            if main_sha and isha and isha != main_sha:
+                state = "at %s, main %s" % (isha[:7], main_sha[:7])
+                fix.append("%s: catalog clone not at main (`claude plugin marketplace update %s`)" % (name, mname))
+            else:
+                state = "= main"
+        elif mname and msrc.get("source") == "directory":
+            inst, state = "catalog %s" % mname, "runs from repo (in place)"
+        elif name in idirs and os.path.exists(os.path.join(idirs[name], ".git")):
+            d = idirs[name]
+            inst = short(d)
+            isha = git(d, "rev-parse", "HEAD")
+            idirty = dirty_count(d, tracked_only=True)
+            if idirty:
+                state = "%d edited file(s) in install" % idirty
+                fix.append("%s: %d tracked file(s) edited in the install dir %s; move the change to the repo"
+                           % (name, idirty, inst))
+            elif main_sha and isha != main_sha:
+                state = "at %s, main %s" % (isha[:7], main_sha[:7])
+                fix.append("%s: install dir not at main (`git -C %s pull --ff-only`)" % (name, inst))
+            else:
+                state = "= main"
+        if unpushed not in ("0", "no upstream", ""):
+            fix.append("%s: %s commit(s) on %s not pushed" % (name, unpushed, branch))
+        gitdir = os.path.join(repo, ".git")
+        conflicts = []
+        for root, _dirs, files in os.walk(gitdir):
+            conflicts += [f for f in files if "conflict" in f.lower()]
+            if len(conflicts) >= 3:
+                break
+        if conflicts:
+            fix.append("%s: sync conflict file(s) in .git: %s" % (name, ", ".join(conflicts[:3])))
+        rows.append((name, branch, str(dirty), unpushed or "?", inst, state))
+
+    outside = []
+    owner = cfg["owner"].lower()
+    if owner:
+        skip = [pdg.real(p) for _, p in repos] + [pdg.real(pdg.plugins_dir())] + \
+               [pdg.real(p) for p in idirs.values()] + [pdg.real(p) for p in pdg.source_folders(cfg)]
+        for base in pdg.as_list(cfg["scan_dirs"]):
+            base = pdg.expand(base)
+            if not base or not os.path.isdir(base):
+                continue
+            for root, dirs, _files in os.walk(base):
+                depth = root[len(base):].count(os.sep)
+                dirs[:] = [d for d in dirs if d not in ("node_modules", ".git")] if depth < 5 else []
+                r = pdg.real(root)
+                if any(pdg.inside(r, s) for s in skip):
+                    dirs[:] = []
+                    continue
+                if os.path.exists(os.path.join(root, ".git")):
+                    url = git(root, "remote", "get-url", "origin").lower()
+                    if "/%s/" % owner in url or ":%s/" % owner in url:
+                        outside.append((short(root), url.rsplit("/", 1)[-1]))
+                    dirs[:] = []
+
+    head = ("repo", "branch", "dirty", "not pushed", "installed", "installed vs main")
+    if rows:
+        if md:
+            print("| " + " | ".join(head) + " |\n|" + "---|" * len(head))
+            for r in rows:
+                print("| " + " | ".join(r) + " |")
+        else:
+            w = [max(len(x[i]) for x in rows + [head]) for i in range(len(head))]
+            for r in [head] + rows:
+                print("  ".join(c.ljust(w[i]) for i, c in enumerate(r)).rstrip())
+    if outside:
+        print("\nRepos of %s outside your sources:" % cfg["owner"])
+        for d, u in outside:
+            print("  %s  (%s)" % (d, u))
+    print("\nFix:" if fix else "\nFix: nothing")
+    for f in fix:
+        print("  - " + f)
+    return 1 if fix else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

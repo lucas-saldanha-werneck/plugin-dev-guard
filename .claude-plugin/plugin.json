@@ -1,0 +1,19 @@
+{
+  "name": "plugin-dev-guard",
+  "version": "0.1.0",
+  "description": "Stops Claude from editing the installed copy of a plugin and points it to the source repo (or a fork and PR); checks repos against installed copies.",
+  "author": {
+    "name": "Lucas Saldanha Werneck",
+    "url": "https://github.com/lucas-saldanha-werneck"
+  },
+  "homepage": "https://github.com/lucas-saldanha-werneck/plugin-dev-guard",
+  "repository": "https://github.com/lucas-saldanha-werneck/plugin-dev-guard",
+  "license": "MIT",
+  "keywords": [
+    "hooks",
+    "plugins",
+    "development",
+    "guard",
+    "fork"
+  ]
+}
