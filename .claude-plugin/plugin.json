@@ -1,6 +1,6 @@
 {
   "name": "plugin-dev-guard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Stops Claude from editing the installed copy of a plugin and points it to the source repo (or a fork and PR); checks repos against installed copies.",
   "author": {
     "name": "Lucas Saldanha Werneck",

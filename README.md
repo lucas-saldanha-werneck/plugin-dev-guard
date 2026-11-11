@@ -18,7 +18,7 @@ Claude tries to edit a hook inside the installed copy. The edit is not made; Cla
 tool error instead:
 
 ```
-plugin-dev-guard: this changes the INSTALLED copy of give-up-guard (~/.claude/plugins/cache/lucas-plugins/give-up-guard/0.3.1/hooks/guard.py). That copy is replaced on the next plugin update, so the change would be lost.
+plugin-dev-guard: this changes the INSTALLED copy of give-up-guard (~/.claude/plugins/cache/lucas-tools/give-up-guard/0.3.1/hooks/guard.py). That copy is replaced on the next plugin update, so the change would be lost.
 - give-up-guard: its source repo is on this machine: ~/code/give-up-guard. Make the change there (branch, commit, bump the version in .claude-plugin/plugin.json, push), then update the installed plugin from it.
 Exception (a quick test or one-off fix): only if the user asked for this exact edit or approves it now (ask first), run `mkdir -p "~/.claude/state" && touch "~/.claude/state/plugin-dev-guard.pass"` (valid 30 minutes) and retry.
 ```
@@ -36,11 +36,11 @@ line points to its repo instead:
 
 ```
 repo              branch  dirty  not pushed  installed                              installed vs main
-give-up-guard     main    0      0           give-up-guard@lucas-plugins 0.3.1      = main
-wait-loop-guard   fix/x   2      1           wait-loop-guard@lucas-plugins 0.2.1    behind main by 3
+give-up-guard     main    0      0           give-up-guard@lucas-tools 0.3.1      = main
+wait-loop-guard   fix/x   2      1           wait-loop-guard@lucas-tools 0.2.1    behind main by 3
 
 Fix:
-  - wait-loop-guard: installed copy 1a2b3c4 is behind main 5d6e7f8 (bump the version, then `claude plugin marketplace update lucas-plugins` and `claude plugin update wait-loop-guard@lucas-plugins`)
+  - wait-loop-guard: installed copy 1a2b3c4 is behind main 5d6e7f8 (bump the version, then `claude plugin marketplace update lucas-tools` and `claude plugin update wait-loop-guard@lucas-tools`)
   - wait-loop-guard: 1 commit(s) on fix/x not pushed
 ```
 
@@ -50,7 +50,7 @@ In Claude Code:
 
 ```
 /plugin marketplace add lucas-saldanha-werneck/claude-plugins
-/plugin install plugin-dev-guard@lucas-plugins
+/plugin install plugin-dev-guard@lucas-tools
 ```
 
 Then run `/reload-plugins` or start a new session to load the hook.
@@ -111,7 +111,7 @@ or sync-conflict files inside `.git`.
 
 Claude can run it as a bare command (Claude Code puts a plugin's `bin/` folder on the Bash
 tool's `PATH`). In your own terminal, run it from the installed plugin, for example
-`python3 ~/.claude/plugins/cache/lucas-plugins/plugin-dev-guard/*/bin/plugin-dev-check`, or
+`python3 ~/.claude/plugins/cache/lucas-tools/plugin-dev-guard/*/bin/plugin-dev-check`, or
 add an alias.
 
 ## How it works
@@ -147,7 +147,7 @@ lets the call through. Input it can't parse, and other tools, pass untouched.
 ## Uninstall
 
 ```
-/plugin uninstall plugin-dev-guard@lucas-plugins
+/plugin uninstall plugin-dev-guard@lucas-tools
 ```
 
 Your settings file stays; delete `~/.config/plugin-dev-guard/` if you want it gone.
