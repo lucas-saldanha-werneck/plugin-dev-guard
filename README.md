@@ -49,7 +49,7 @@ Fix:
 In Claude Code:
 
 ```
-/plugin marketplace add lucas-saldanha-werneck/claude-plugins
+/plugin marketplace add lucas-saldanha-werneck/lucas-tools
 /plugin install plugin-dev-guard@lucas-tools
 ```
 
