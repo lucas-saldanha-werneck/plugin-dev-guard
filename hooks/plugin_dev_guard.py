@@ -10,8 +10,8 @@ a pull request to its author.
 Only real write targets are judged: Edit/Write file paths, and for Bash the files the
 command writes (see shellwrites.py), never a path that only appears in the text.
 
-Exception: the user approves and Claude repeats the same edit (it goes through once), or Claude
-touches the pass file (valid pass_minutes). While the
+Exception: Claude asks, the user answers in a new message (UserPromptSubmit, `--prompt`), and Claude
+repeats the same edit: it goes through once. Or Claude touches the pass file (valid pass_minutes). While the
 pass is valid the edit goes through with a reminder: make the same change in the source repo.
 `--seed` (SessionStart) creates the settings file when it is missing.
 """
@@ -59,13 +59,42 @@ def read_warned(minutes):
     return {p: t for p, t in data.items() if isinstance(t, (int, float)) and now - t < minutes * 60}
 
 
-def write_warned(data):
+def write_json(path, data):
     try:
-        os.makedirs(os.path.dirname(warned_file()), exist_ok=True)
-        with open(warned_file(), "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f)
     except OSError:
         pass
+
+
+def write_warned(data):
+    write_json(warned_file(), data)
+
+
+def prompts_file():
+    return os.path.join(os.path.dirname(pdg.pass_file()), "plugin-dev-guard.prompts.json")
+
+
+def record_prompt(data):
+    """UserPromptSubmit: note when the user last sent a message in this session (only while a warning waits)."""
+    sid = str((data or {}).get("session_id") or "")
+    if not sid or not pdg.read_json(warned_file(), {}):
+        return
+    seen = pdg.read_json(prompts_file(), {})
+    if not isinstance(seen, dict):
+        seen = {}
+    now = time.time()
+    seen = {s: t for s, t in seen.items() if isinstance(t, (int, float)) and now - t < 86400}
+    seen[sid] = now
+    write_json(prompts_file(), seen)
+
+
+def answered_since(sid, since):
+    """The user sent a message in this session after `since` (the time of the warning)."""
+    seen = pdg.read_json(prompts_file(), {})
+    t = seen.get(sid) if isinstance(seen, dict) and sid else None
+    return isinstance(t, (int, float)) and t > since
 
 
 def message(hits, cfg, known):
@@ -89,9 +118,10 @@ def message(hits, cfg, known):
                          "and open a pull request to its author. Never patch the installed copy."
                          % (h["name"], where))
     pf = pdg.pass_file()
-    lines.append("Exception (a quick test or one-off fix): tell the user what this changes and ask. If the user "
-                 "confirms they want the local edit anyway, make the SAME edit again: the repeat goes through once "
-                 "(within %g minutes). Never repeat it without the user's yes. For several files at once, run "
+    lines.append("Exception (a quick test or one-off fix): end your turn and ask the user, saying what this changes. "
+                 "Only after the user answers yes in a new message, make the SAME edit again: it goes through once "
+                 "(within %g minutes). A repeat before the user's next message is blocked again. For several files "
+                 "at once, run "
                  "`mkdir -p \"%s\" && touch \"%s\"` instead (a pass for every installed copy, same time limit)."
                  % (cfg["pass_minutes"], os.path.dirname(pf).replace(os.sep, "/"), pf.replace(os.sep, "/")))
     if cfg["tip"].strip():
@@ -135,6 +165,9 @@ def main():
         return
     if not isinstance(data, dict):
         return
+    if "--prompt" in sys.argv:
+        record_prompt(data)
+        return
     try:
         paths = [p for p in write_targets(data) if p]
     except Exception:
@@ -163,13 +196,15 @@ def main():
             "hookEventName": "PreToolUse",
             "additionalContext": reminder(hits, cfg, known)}}))
         return
-    if all(p in warned for p in paths):  # the repeat after the warning: the user said yes
+    sid = str(data.get("session_id") or "")
+    if all(p in warned for p in paths) and answered_since(sid, max(warned[p] for p in paths)):
+        # the same edit again, after a message from the user that came after the warning
         write_warned({p: t for p, t in warned.items() if p not in paths})
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "additionalContext": reminder(hits, cfg, known, "the repeat after the warning")}}))
+            "additionalContext": reminder(hits, cfg, known, "the repeat after the user's answer")}}))
         return
-    warned.update({p: time.time() for p in paths})
+    warned.update({p: warned.get(p) or time.time() for p in paths})
     write_warned(warned)
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",

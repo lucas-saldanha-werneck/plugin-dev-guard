@@ -20,7 +20,7 @@ tool error instead:
 ```
 plugin-dev-guard: this changes the INSTALLED copy of give-up-guard (~/.claude/plugins/cache/lucas-tools/give-up-guard/0.3.1/hooks/guard.py). That copy is replaced on the next plugin update, so the change would be lost.
 - give-up-guard: its source repo is on this machine: ~/code/give-up-guard. Make the change there (branch, commit, bump the version in .claude-plugin/plugin.json, push), then update the installed plugin from it.
-Exception (a quick test or one-off fix): tell the user what this changes and ask. If the user confirms they want the local edit anyway, make the SAME edit again: the repeat goes through once (within 30 minutes). Never repeat it without the user's yes. For several files at once, run `mkdir -p "~/.claude/state" && touch "~/.claude/state/plugin-dev-guard.pass"` instead (a pass for every installed copy, same time limit).
+Exception (a quick test or one-off fix): end your turn and ask the user, saying what this changes. Only after the user answers yes in a new message, make the SAME edit again: it goes through once (within 30 minutes). A repeat before the user's next message is blocked again. For several files at once, run `mkdir -p "~/.claude/state" && touch "~/.claude/state/plugin-dev-guard.pass"` instead (a pass for every installed copy, same time limit).
 ```
 
 For a plugin with no local source repo (someone else's, or yours on another machine), the
@@ -142,8 +142,9 @@ set, else `~/.claude/plugins`) and your `install_dirs`. On a hit, the hook looks
 source repo, else for the plugin's repo address (from the marketplace entry, the plugin's own
 `plugin.json`, or the marketplace in `known_marketplaces.json`), and returns
 `permissionDecision: "deny"` with the message above, and notes the file in
-`~/.claude/state/plugin-dev-guard.warned.json`. The same edit made again within `pass_minutes`
-(the user said yes) goes through once; so does any edit while a pass file younger than `pass_minutes`
+`~/.claude/state/plugin-dev-guard.warned.json`. A UserPromptSubmit hook notes when you send a message
+in that session (`plugin-dev-guard.prompts.json`, only while a warning waits). The same edit made again
+within `pass_minutes`, after a message from you that came after the warning, goes through once; so does any edit while a pass file younger than `pass_minutes`
 exists. Either way the call goes through, and Claude is told what it just edited: when the plugin's source repo is
 on this machine, to make the same change there too; otherwise, that the change lasts only until
 the next update and where to open a pull request. Your `tip` is added to that reminder as well.
@@ -168,6 +169,8 @@ Your settings file stays; delete `~/.config/plugin-dev-guard/` if you want it go
 - Commands that write through stdin lists (`... | xargs rm`) are judged only on the paths
   written in the command.
 - The pass file opens every installed copy, not only the one you approved, until it expires.
+- The hook sees that you sent a message after the warning, not what it says: a plugin that submits a prompt
+  in your place also counts as an answer.
 - Tested on macOS in the terminal CLI. The tests also run on Linux and Windows in CI, but I
   have not used the plugin in a real session there.
 

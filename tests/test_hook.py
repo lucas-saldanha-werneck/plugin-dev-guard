@@ -136,32 +136,49 @@ class Hook(unittest.TestCase):
         self.assertIsNone(self.f.edit(os.path.join(self.f.myplug, "hooks", "x.py")))
         self.assertIsNone(self.f.note)
 
-    def test_repeat_after_warning_goes_through_once(self):
+    def sedit(self, path, sid="s1"):
+        return self.f.run_hook({"tool_name": "Edit", "tool_input": {"file_path": path}, "cwd": self.f.home,
+                                "session_id": sid})
+
+    def answer(self, sid="s1"):
+        time.sleep(0.01)
+        return self.f.run_hook({"prompt": "yes", "session_id": sid}, "--prompt")
+
+    def test_repeat_needs_a_message_from_the_user(self):
         path = self.cached("theirs/tool/1.0.0/a")
-        msg = self.f.edit(path)
-        self.assertIn("make the SAME edit again", msg)
-        self.assertIn("Never repeat it without the user's yes", msg)
-        self.assertIsNone(self.f.edit(path))                      # the repeat: allowed, with a reminder
-        self.assertIn("the repeat after the warning", self.f.note)
-        self.assertIsNotNone(self.f.edit(path))                   # used up: warned again
+        msg = self.sedit(path)
+        self.assertIn("Only after the user answers yes in a new message", msg)
+        self.assertIsNotNone(self.sedit(path))                    # repeated without asking: still blocked
+        self.assertIsNone(self.answer())
+        self.assertIsNone(self.sedit(path))                       # after the answer: allowed once
+        self.assertIn("the repeat after the user's answer", self.f.note)
+        self.assertIsNotNone(self.sedit(path))                    # used up: warned again
+
+    def test_an_answer_in_another_session_does_not_count(self):
+        path = self.cached("theirs/tool/1.0.0/a")
+        self.assertIsNotNone(self.sedit(path, "s1"))
+        self.answer("s2")
+        self.assertIsNotNone(self.sedit(path, "s1"))
 
     def test_repeat_of_my_plugin_reminds_to_change_the_repo(self):
         self.f.set_config({"owner": "me", "sources": self.f.src})
         path = self.cached("mine/myplug/0.1.0/hooks/x.py")
-        self.assertIsNotNone(self.f.edit(path))
-        self.assertIsNone(self.f.edit(path))
+        self.assertIsNotNone(self.sedit(path))
+        self.answer()
+        self.assertIsNone(self.sedit(path))
         self.assertIn(self.f.myplug, self.f.note)
         self.assertIn("same change there", self.f.note)
 
     def test_repeat_needs_the_same_file_and_expires(self):
         a, b = self.cached("theirs/tool/1.0.0/a"), self.cached("theirs/tool/1.0.0/b")
-        self.assertIsNotNone(self.f.edit(a))
-        self.assertIsNotNone(self.f.edit(b))                      # another file: its own warning
+        self.assertIsNotNone(self.sedit(a))
+        self.assertIsNotNone(self.sedit(b))                       # another file: its own warning
         wf = os.path.join(self.f.home, ".claude", "state", "plugin-dev-guard.warned.json")
         with open(wf, encoding="utf-8") as fh:
             data = json.load(fh)
         write(wf, {p: t - 31 * 60 for p, t in data.items()})     # older than pass_minutes
-        self.assertIsNotNone(self.f.edit(a))
+        self.answer()
+        self.assertIsNotNone(self.sedit(a))
 
     def test_bad_input_passes(self):
         self.assertIsNone(self.f.run_hook("not json"))
