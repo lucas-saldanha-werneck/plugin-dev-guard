@@ -20,7 +20,7 @@ tool error instead:
 ```
 plugin-dev-guard: this changes the INSTALLED copy of give-up-guard (~/.claude/plugins/cache/lucas-tools/give-up-guard/0.3.1/hooks/guard.py). That copy is replaced on the next plugin update, so the change would be lost.
 - give-up-guard: its source repo is on this machine: ~/code/give-up-guard. Make the change there (branch, commit, bump the version in .claude-plugin/plugin.json, push), then update the installed plugin from it.
-Exception (a quick test or one-off fix): only if the user asked for this exact edit or approves it now (ask first), run `mkdir -p "~/.claude/state" && touch "~/.claude/state/plugin-dev-guard.pass"` (valid 30 minutes) and retry.
+Exception (a quick test or one-off fix): tell the user what this changes and ask. If the user confirms they want the local edit anyway, make the SAME edit again: the repeat goes through once (within 30 minutes). Never repeat it without the user's yes. For several files at once, run `mkdir -p "~/.claude/state" && touch "~/.claude/state/plugin-dev-guard.pass"` instead (a pass for every installed copy, same time limit).
 ```
 
 For a plugin with no local source repo (someone else's, or yours on another machine), the
@@ -89,7 +89,7 @@ them instead:
 | `sources` | `[]` | where your source repos live: a folder that holds them, a list of folders, or a map of plugin (or marketplace) name to repo path |
 | `install_dirs` | `{}` | other installed copies to protect, outside the plugins folder, such as a CLI installed by cloning its repo: a map of name to path, or a list of paths (name = folder name without `-src`) |
 | `exempt` | `[]` | paths inside an install dir that may be written, such as logs or runtime data |
-| `pass_minutes` | `30` | how long the pass file lets edits through after you approve one |
+| `pass_minutes` | `30` | how long a warned edit can be repeated, and how long the pass file lets edits through |
 | `scan_dirs` | `[]` | `plugin-dev-check` only: folders searched for repos of `owner` that are outside `sources` |
 | `tip` | `""` | a line added at the end of the message Claude sees (the block and the reminder after a pass), for example your own follow-up step |
 
@@ -141,8 +141,10 @@ Each target is checked against the plugins folder (`$CLAUDE_CONFIG_DIR/plugins` 
 set, else `~/.claude/plugins`) and your `install_dirs`. On a hit, the hook looks for the local
 source repo, else for the plugin's repo address (from the marketplace entry, the plugin's own
 `plugin.json`, or the marketplace in `known_marketplaces.json`), and returns
-`permissionDecision: "deny"` with the message above. A pass file younger than `pass_minutes`
-lets the call through, and Claude is told what it just edited: when the plugin's source repo is
+`permissionDecision: "deny"` with the message above, and notes the file in
+`~/.claude/state/plugin-dev-guard.warned.json`. The same edit made again within `pass_minutes`
+(the user said yes) goes through once; so does any edit while a pass file younger than `pass_minutes`
+exists. Either way the call goes through, and Claude is told what it just edited: when the plugin's source repo is
 on this machine, to make the same change there too; otherwise, that the change lasts only until
 the next update and where to open a pull request. Your `tip` is added to that reminder as well.
 Input it can't parse, and other tools, pass untouched.

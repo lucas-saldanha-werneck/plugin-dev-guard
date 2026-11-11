@@ -10,7 +10,8 @@ a pull request to its author.
 Only real write targets are judged: Edit/Write file paths, and for Bash the files the
 command writes (see shellwrites.py), never a path that only appears in the text.
 
-Exception: the user approves, Claude touches the pass file (valid pass_minutes). While the
+Exception: the user approves and Claude repeats the same edit (it goes through once), or Claude
+touches the pass file (valid pass_minutes). While the
 pass is valid the edit goes through with a reminder: make the same change in the source repo.
 `--seed` (SessionStart) creates the settings file when it is missing.
 """
@@ -45,6 +46,28 @@ def pass_valid(minutes):
         return False
 
 
+def warned_file():
+    return os.path.join(os.path.dirname(pdg.pass_file()), "plugin-dev-guard.warned.json")
+
+
+def read_warned(minutes):
+    """Paths Claude was warned about, still inside the pass window: {path: time}."""
+    now = time.time()
+    data = pdg.read_json(warned_file(), {})
+    if not isinstance(data, dict):
+        return {}
+    return {p: t for p, t in data.items() if isinstance(t, (int, float)) and now - t < minutes * 60}
+
+
+def write_warned(data):
+    try:
+        os.makedirs(os.path.dirname(warned_file()), exist_ok=True)
+        with open(warned_file(), "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except OSError:
+        pass
+
+
 def message(hits, cfg, known):
     names = ", ".join(sorted({h["name"] for h in hits}))
     lines = ["plugin-dev-guard: this changes the INSTALLED copy of %s (%s). That copy is replaced "
@@ -66,20 +89,21 @@ def message(hits, cfg, known):
                          "and open a pull request to its author. Never patch the installed copy."
                          % (h["name"], where))
     pf = pdg.pass_file()
-    lines.append("Exception (a quick test or one-off fix): only if the user asked for this exact edit "
-                 "or approves it now (ask first), run `mkdir -p \"%s\" && touch \"%s\"` (valid %g minutes) "
-                 "and retry." % (os.path.dirname(pf).replace(os.sep, "/"), pf.replace(os.sep, "/"),
-                                 cfg["pass_minutes"]))
+    lines.append("Exception (a quick test or one-off fix): tell the user what this changes and ask. If the user "
+                 "confirms they want the local edit anyway, make the SAME edit again: the repeat goes through once "
+                 "(within %g minutes). Never repeat it without the user's yes. For several files at once, run "
+                 "`mkdir -p \"%s\" && touch \"%s\"` instead (a pass for every installed copy, same time limit)."
+                 % (cfg["pass_minutes"], os.path.dirname(pf).replace(os.sep, "/"), pf.replace(os.sep, "/")))
     if cfg["tip"].strip():
         lines.append(cfg["tip"].strip())
     return "\n".join(lines)
 
 
-def reminder(hits, cfg, known):
-    """What Claude is told when the pass file lets the edit through."""
+def reminder(hits, cfg, known, why="the pass file"):
+    """What Claude is told when the pass file, or a repeat after the warning, lets the edit through."""
     names = ", ".join(sorted({h["name"] for h in hits}))
-    lines = ["plugin-dev-guard: allowed by the pass file. This edits the INSTALLED copy of %s (%s), "
-             "which the next plugin update replaces." % (names, hits[0]["path"])]
+    lines = ["plugin-dev-guard: allowed by %s. This edits the INSTALLED copy of %s (%s), "
+             "which the next plugin update replaces." % (why, names, hits[0]["path"])]
     seen = set()
     for h in hits:
         if h["name"] in seen:
@@ -131,11 +155,22 @@ def main():
         hits.append(h)
     if not hits:
         return
+    warned = read_warned(cfg["pass_minutes"])
+    paths = [h["path"] for h in hits]
     if pass_valid(cfg["pass_minutes"]):
+        write_warned({p: t for p, t in warned.items() if p not in paths})
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "additionalContext": reminder(hits, cfg, known)}}))
         return
+    if all(p in warned for p in paths):  # the repeat after the warning: the user said yes
+        write_warned({p: t for p, t in warned.items() if p not in paths})
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": reminder(hits, cfg, known, "the repeat after the warning")}}))
+        return
+    warned.update({p: time.time() for p in paths})
+    write_warned(warned)
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
