@@ -68,13 +68,18 @@ class FakeHome(object):
         return e
 
     def run_hook(self, payload, *args):
+        self.note = None
         r = subprocess.run([sys.executable, "-I", HOOK] + list(args), input=json.dumps(payload),
                            capture_output=True, text=True, env=self.env(), timeout=60)
         assert r.returncode == 0, r.stderr
         if not r.stdout.strip():
             return None
         d = json.loads(r.stdout)["hookSpecificOutput"]
-        assert d["hookEventName"] == "PreToolUse" and d["permissionDecision"] == "deny"
+        assert d["hookEventName"] == "PreToolUse"
+        if "permissionDecision" not in d:  # let through, with a reminder
+            self.note = d["additionalContext"]
+            return None
+        assert d["permissionDecision"] == "deny"
         return d["permissionDecisionReason"]
 
     def bash(self, cmd, cwd=None):

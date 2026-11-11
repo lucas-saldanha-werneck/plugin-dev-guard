@@ -114,9 +114,27 @@ class Hook(unittest.TestCase):
         pf = os.path.join(self.f.home, ".claude", "state", "plugin-dev-guard.pass")
         write(pf, "")
         self.assertIsNone(self.f.edit(self.cached("theirs/tool/1.0.0/a")))
+        self.assertIn("allowed by the pass file", self.f.note)
+        self.assertIn("pull request", self.f.note)
         old = time.time() - 31 * 60
         os.utime(pf, (old, old))
         self.assertIsNotNone(self.f.edit(self.cached("theirs/tool/1.0.0/a")))
+
+    def test_pass_file_reminds_of_the_local_source_repo(self):
+        pf = os.path.join(self.f.home, ".claude", "state", "plugin-dev-guard.pass")
+        write(pf, "")
+        self.f.set_config({"owner": "me", "sources": self.f.src, "tip": "MY-TIP"})
+        self.assertIsNone(self.f.edit(self.cached("mine/myplug/0.1.0/hooks/x.py")))
+        self.assertIn("INSTALLED copy of myplug", self.f.note)
+        self.assertIn(self.f.myplug, self.f.note)
+        self.assertIn("same change there", self.f.note)
+        self.assertIn("MY-TIP", self.f.note)
+
+    def test_pass_file_says_nothing_for_other_files(self):
+        pf = os.path.join(self.f.home, ".claude", "state", "plugin-dev-guard.pass")
+        write(pf, "")
+        self.assertIsNone(self.f.edit(os.path.join(self.f.myplug, "hooks", "x.py")))
+        self.assertIsNone(self.f.note)
 
     def test_bad_input_passes(self):
         self.assertIsNone(self.f.run_hook("not json"))

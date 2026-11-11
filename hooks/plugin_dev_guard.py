@@ -10,7 +10,8 @@ a pull request to its author.
 Only real write targets are judged: Edit/Write file paths, and for Bash the files the
 command writes (see shellwrites.py), never a path that only appears in the text.
 
-Exception: the user approves, Claude touches the pass file (valid pass_minutes).
+Exception: the user approves, Claude touches the pass file (valid pass_minutes). While the
+pass is valid the edit goes through with a reminder: make the same change in the source repo.
 `--seed` (SessionStart) creates the settings file when it is missing.
 """
 import json
@@ -74,6 +75,32 @@ def message(hits, cfg, known):
     return "\n".join(lines)
 
 
+def reminder(hits, cfg, known):
+    """What Claude is told when the pass file lets the edit through."""
+    names = ", ".join(sorted({h["name"] for h in hits}))
+    lines = ["plugin-dev-guard: allowed by the pass file. This edits the INSTALLED copy of %s (%s), "
+             "which the next plugin update replaces." % (names, hits[0]["path"])]
+    seen = set()
+    for h in hits:
+        if h["name"] in seen:
+            continue
+        seen.add(h["name"])
+        src = pdg.find_source(h, cfg, known)
+        if src:
+            lines.append("- %s: its source repo is on this machine: %s. Make the same change there too "
+                         "(branch, commit, bump the version in .claude-plugin/plugin.json, push), or it "
+                         "is lost on the next update. Tell the user it is still to do if you do not do "
+                         "it now." % (h["name"], src))
+        else:
+            url = pdg.find_url(h, known)
+            where = url or "its repo (the plugin's homepage in /plugin)"
+            lines.append("- %s: no local source repo found. The change lasts only until the next update; "
+                         "to keep it, open a pull request at %s. Tell the user." % (h["name"], where))
+    if cfg["tip"].strip():
+        lines.append(cfg["tip"].strip())
+    return "\n".join(lines)
+
+
 def main():
     if "--seed" in sys.argv:
         pdg.seed_config()
@@ -102,7 +129,12 @@ def main():
             continue
         h["path"] = p
         hits.append(h)
-    if not hits or pass_valid(cfg["pass_minutes"]):
+    if not hits:
+        return
+    if pass_valid(cfg["pass_minutes"]):
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": reminder(hits, cfg, known)}}))
         return
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",

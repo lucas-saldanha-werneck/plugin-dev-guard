@@ -91,7 +91,7 @@ them instead:
 | `exempt` | `[]` | paths inside an install dir that may be written, such as logs or runtime data |
 | `pass_minutes` | `30` | how long the pass file lets edits through after you approve one |
 | `scan_dirs` | `[]` | `plugin-dev-check` only: folders searched for repos of `owner` that are outside `sources` |
-| `tip` | `""` | a line added at the end of the message Claude sees, for example your own follow-up step |
+| `tip` | `""` | a line added at the end of the message Claude sees (the block and the reminder after a pass), for example your own follow-up step |
 
 A source repo is matched to an installed plugin by the `name` in its `.claude-plugin/plugin.json`,
 by the catalog name in its `.claude-plugin/marketplace.json` (for catalog clones and plugins kept
@@ -142,7 +142,10 @@ set, else `~/.claude/plugins`) and your `install_dirs`. On a hit, the hook looks
 source repo, else for the plugin's repo address (from the marketplace entry, the plugin's own
 `plugin.json`, or the marketplace in `known_marketplaces.json`), and returns
 `permissionDecision: "deny"` with the message above. A pass file younger than `pass_minutes`
-lets the call through. Input it can't parse, and other tools, pass untouched.
+lets the call through, and Claude is told what it just edited: when the plugin's source repo is
+on this machine, to make the same change there too; otherwise, that the change lasts only until
+the next update and where to open a pull request. Your `tip` is added to that reminder as well.
+Input it can't parse, and other tools, pass untouched.
 
 ## Uninstall
 
