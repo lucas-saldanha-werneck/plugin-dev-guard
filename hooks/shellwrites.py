@@ -8,7 +8,8 @@ Only real write targets count, never a path that merely appears in the text:
   - dd of=, curl -o, wget -O, tar -x (-C), unzip (-d), patch (-d / file)
   - git commands that change the work tree (target: the -C folder or the current folder)
   - find ... -delete / -exec <writer>: the folders find starts from
-  - bash/sh/zsh -c '...', eval '...' and heredocs fed to a shell are parsed the same way
+  - bash/sh/zsh -c '...', eval '...', heredocs fed to a shell, and $(...) or `...` (also inside
+    double quotes) are parsed the same way
   - python/node/ruby/perl code (-c / -e / heredoc): quoted paths, only when the code
     also calls a write function (open(..., 'w'), write_text, shutil, fs.writeFile ...)
 
@@ -47,8 +48,37 @@ class Heredoc(object):
         self.body = ""
 
 
+def closing_paren(text, i):
+    """Index of the ')' that closes the '$(' whose '(' is at text[i], skipping quoted parts."""
+    depth, j, n = 0, i, len(text)
+    while j < n:
+        c = text[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == "'":
+            k = text.find("'", j + 1)
+            j = n if k < 0 else k + 1
+            continue
+        if c == '"':
+            k = j + 1
+            while k < n and text[k] != '"':
+                k += 2 if text[k] == "\\" else 1
+            j = k + 1
+            continue
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return j
+        j += 1
+    return n
+
+
 def tokenize(text):
-    """Tokens: ('w', word), ('op', op) or ('hd', Heredoc). Quotes are removed."""
+    """Tokens: ('w', word), ('op', op), ('hd', Heredoc) or ('sub', code) for a $(...) or `...` found
+    inside double quotes (it still runs there). Quotes are removed."""
     toks, pending = [], []
     word, has_word = [], False
     i, n = 0, len(text)
@@ -89,6 +119,20 @@ def tokenize(text):
                     if text[j + 1] != "\n":
                         buf.append(text[j + 1])
                     j += 2
+                    continue
+                if text.startswith("$(", j) and not text.startswith("$((", j):
+                    k = closing_paren(text, j + 1)
+                    toks.append(("sub", text[j + 2:k]))
+                    buf.append(text[j:k + 1])
+                    j = k + 1
+                    continue
+                if text[j] == "`":
+                    k = j + 1
+                    while k < n and text[k] != "`":
+                        k += 2 if text[k] == "\\" else 1
+                    toks.append(("sub", text[j + 1:k]))
+                    buf.append(text[j:k + 1])
+                    j = k + 1
                     continue
                 buf.append(text[j])
                 j += 1
@@ -171,10 +215,13 @@ def commands(toks):
     out, cur, piped = [], None, False
     for kind, val in toks:
         if cur is None:
-            cur = {"words": [], "redirs": [], "heredocs": [], "piped": piped}
+            cur = {"words": [], "redirs": [], "heredocs": [], "piped": piped, "subs": []}
             piped = False
+        if kind == "sub":
+            cur["subs"].append(val)
+            continue
         if kind == "op" and val in SEPARATORS:
-            if cur["words"] or cur["redirs"] or cur["heredocs"]:
+            if cur["words"] or cur["redirs"] or cur["heredocs"] or cur["subs"]:
                 out.append(cur)
             cur = None
             piped = val in ("|", "|&")
@@ -187,7 +234,7 @@ def commands(toks):
             cur["redirs"][-1][1] = val
         else:
             cur["words"].append(val)
-    if cur and (cur["words"] or cur["redirs"] or cur["heredocs"]):
+    if cur and (cur["words"] or cur["redirs"] or cur["heredocs"] or cur["subs"]):
         out.append(cur)
     return out
 
@@ -356,6 +403,8 @@ def code_paths(code, cwd):
 
 def command_targets(c, cwd, stdin_bodies, depth):
     out = []
+    for code in c.get("subs", []):
+        out.extend(targets(code, cwd, depth + 1))
     for op, t in c["redirs"]:
         if op in WRITE_REDIRS and t is not None:
             if op == ">&" and (t.isdigit() or t == "-"):

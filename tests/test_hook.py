@@ -2,6 +2,7 @@
 """Feed PreToolUse JSON to the hook in a fake home folder and check allow/deny and the message."""
 import json
 import os
+import subprocess
 import sys
 import time
 import unittest
@@ -196,9 +197,113 @@ class Hook(unittest.TestCase):
         wf = os.path.join(self.f.home, ".claude", "state", "plugin-dev-guard.warned.json")
         with open(wf, encoding="utf-8") as fh:
             data = json.load(fh)
-        write(wf, {p: t - 31 * 60 for p, t in data.items()})     # older than pass_minutes
+        write(wf, {p: dict(w, t=w["t"] - 31 * 60) for p, w in data.items()})  # older than pass_minutes
         self.answer()
         self.assertIsNotNone(self.sedit(a))
+
+    # --- second audit ----------------------------------------------------
+    def state(self, name):
+        return os.path.join(self.f.home, ".claude", "state", name)
+
+    def sbash(self, cmd, sid="s1"):
+        return self.f.run_hook({"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": self.f.home,
+                                "session_id": sid})
+
+    def test_claude_cannot_make_its_own_pass(self):  # PDG-01
+        pf = self.state("plugin-dev-guard.pass").replace(os.sep, "/")
+        cmd = 'mkdir -p "%s" && touch "%s"' % (os.path.dirname(pf), pf)
+        msg = self.sbash(cmd)
+        self.assertIsNotNone(msg)
+        self.assertIn("ask the user", msg)
+        self.assertFalse(os.path.exists(pf))
+        self.assertIsNotNone(self.sbash(cmd))                     # again without asking: blocked
+        self.answer()
+        self.assertIsNone(self.sbash(cmd))                        # after the user's answer: allowed once
+        self.assertIsNotNone(self.f.edit(self.cached("theirs/tool/1.0.0/a"), tool="Write"))  # never ran here
+        self.assertIsNotNone(self.f.run_hook({"tool_name": "Write", "tool_input": {"file_path": pf},
+                                              "cwd": self.f.home, "session_id": "s1"}))
+
+    def test_pass_command_from_the_message_goes_through_after_the_users_yes(self):  # PDG-01
+        msg = self.sedit(self.cached("theirs/tool/1.0.0/a"))
+        cmd = msg.split("run `", 1)[1].split("`", 1)[0]
+        self.assertIn("plugin-dev-guard.pass", cmd)
+        self.assertIsNotNone(self.sbash(cmd))                     # before asking: blocked
+        self.answer()
+        self.assertIsNone(self.sbash(cmd))                        # after the yes: allowed once
+        self.assertIn("pass allowed after the user's answer", self.f.note)
+
+    def test_state_files_cannot_be_forged(self):  # PDG-01
+        for name in ("plugin-dev-guard.prompts.json", "plugin-dev-guard.warned.json"):
+            path = self.state(name)
+            msg = self.f.edit(path, tool="Write")
+            self.assertIsNotNone(msg, name)
+            self.assertIn("state", msg)
+            self.answer()
+            self.assertIsNotNone(self.f.edit(path, tool="Write"), name)
+
+    def test_repeat_must_be_the_same_call_in_the_same_session(self):  # PDG-02
+        path = self.cached("theirs/tool/1.0.0/a")
+        call = lambda sid, new: self.f.run_hook({  # noqa: E731
+            "tool_name": "Edit", "tool_input": {"file_path": path, "old_string": "a", "new_string": new},
+            "cwd": self.f.home, "session_id": sid})
+        self.assertIsNotNone(call("s1", "b"))
+        self.answer("s1")
+        self.assertIsNotNone(call("s1", "DIFFERENT"))             # another change to the same file
+        self.answer("s2")
+        self.assertIsNotNone(call("s2", "b"))                     # the same change from another session
+        self.answer("s1")
+        self.assertIsNotNone(call("s1", "b"))                     # s2's warning replaced s1's
+        self.answer("s1")
+        self.assertIsNone(call("s1", "b"))                        # the same call, same session, after an answer
+
+    def test_parallel_warnings_are_all_kept(self):  # PDG-05
+        procs = []
+        for i in range(24):
+            payload = json.dumps({"tool_name": "Edit", "cwd": self.f.home, "session_id": "s1",
+                                  "tool_input": {"file_path": self.cached("theirs/tool/1.0.0/f%d" % i)}})
+            p = subprocess.Popen([sys.executable, "-I", os.path.join(os.path.dirname(__file__), "..", "hooks",
+                                  "plugin_dev_guard.py")], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, env=self.f.env())
+            procs.append((p, payload))
+        for p, payload in procs:
+            p.stdin.write(payload.encode())
+            p.stdin.close()
+        for p, _ in procs:
+            p.wait(60)
+            p.stdout.close()
+            p.stderr.close()
+        with open(self.state("plugin-dev-guard.warned.json"), encoding="utf-8") as fh:
+            kept = json.load(fh)
+        self.assertEqual(sum(1 for p in kept if not p.endswith("plugin-dev-guard.pass")), 24)
+
+    def test_unparsable_input_naming_an_installed_copy_is_refused(self):  # PDG-06
+        bad = {"tool_name": "Bash", "tool_input": {"command": ["rm", "-rf", "~/.claude/plugins/cache"]},
+               "cwd": self.f.home}
+        self.assertIsNotNone(self.f.run_hook(bad))
+        other = {"tool_name": "Bash", "tool_input": {"command": ["ls", "/tmp"]}, "cwd": self.f.home}
+        self.assertIsNone(self.f.run_hook(other))
+
+    def test_odd_known_marketplaces_still_decides(self):  # PDG-06
+        km = os.path.join(self.f.plugins, "known_marketplaces.json")
+        with open(km, encoding="utf-8") as fh:
+            data = json.load(fh)
+        data.update({"broken": "oops", "odd": {"source": "github"}, "none": None})
+        write(km, data)
+        self.f.set_config({"owner": "me", "guard": "mine", "sources": self.f.src})
+        self.assertIsNotNone(self.f.edit(self.cached("mine/myplug/0.1.0/a")))
+        self.assertIsNone(self.f.edit(self.cached("theirs/tool/1.0.0/a")))   # not mine: let through
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS file systems ignore case by default")
+    def test_other_letter_case_is_still_the_installed_copy(self):  # PDG-07
+        upper = self.cached("theirs/tool/1.0.0/a").replace(os.sep + "theirs" + os.sep, os.sep + "THEIRS" + os.sep)
+        if not os.path.exists(os.path.dirname(upper)):
+            self.skipTest("case-sensitive file system")
+        msg = self.f.edit(upper)
+        self.assertIsNotNone(msg)
+        self.assertIn("https://github.com/author/tool", msg)
+        upper2 = self.cached("mine/myplug/0.1.0/a").replace(".claude", ".CLAUDE")
+        self.f.set_config({"owner": "me", "guard": "mine", "sources": self.f.src})
+        self.assertIsNotNone(self.f.edit(upper2))
 
     def test_bad_input_passes(self):
         self.assertIsNone(self.f.run_hook("not json"))

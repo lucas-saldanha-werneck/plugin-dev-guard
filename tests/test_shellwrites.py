@@ -154,5 +154,24 @@ class RealTargets(unittest.TestCase):
         self.assertEqual(t("ls # > %s/f" % CACHE), [])
 
 
+class SubstitutionInDoubleQuotes(unittest.TestCase):
+    """PDG-03: $(...) and backticks run even inside double quotes."""
+
+    def test_dollar_paren_in_double_quotes(self):
+        self.assertEqual(t('echo "$(rm %s/x)"' % CACHE), [p(CACHED, "x")])
+
+    def test_backticks_in_double_quotes(self):
+        self.assertEqual(t('echo "`touch %s/y`"' % CACHE), [p(CACHED, "y")])
+
+    def test_nested_and_text_around(self):
+        self.assertEqual(t('echo "a $(echo "$(rm %s/z)") b"' % CACHE), [p(CACHED, "z")])
+
+    def test_single_quotes_stay_text(self):
+        self.assertEqual(t("echo '$(rm %s/x)'" % CACHE), [])
+
+    def test_escaped_dollar_stays_text(self):
+        self.assertEqual(t('echo "\\$(rm %s/x)"' % CACHE), [])
+
+
 if __name__ == "__main__":
     unittest.main()

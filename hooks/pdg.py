@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 EXAMPLE = os.path.join(HERE, "..", "config.example.json")
@@ -103,8 +104,19 @@ def read_json(path, default):
 
 
 def known_marketplaces():
+    """{name: info}; entries that are not objects are dropped, and a `source` that is not an object
+    becomes {}, so odd data never stops the hook."""
     d = read_json(os.path.join(plugins_dir(), "known_marketplaces.json"), {})
-    return d if isinstance(d, dict) else {}
+    if not isinstance(d, dict):
+        return {}
+    out = {}
+    for name, info in d.items():
+        if isinstance(info, dict):
+            info = dict(info)
+            if not isinstance(info.get("source"), dict):
+                info["source"] = {}
+            out[name] = info
+    return out
 
 
 def installed_plugins():
@@ -113,8 +125,33 @@ def installed_plugins():
     return d if isinstance(d, dict) else {}
 
 
+def true_case(p):
+    """macOS file systems ignore letter case by default: give each existing part of the path the
+    case it has on disk, so ~/.CLAUDE/plugins/cache/THEIRS/... is matched like the real folder."""
+    head, parts = p, []
+    while True:
+        h, t = os.path.split(head)
+        if not t:
+            break
+        parts.append(t)
+        head = h
+    out = head
+    for i, part in enumerate(reversed(parts)):
+        try:
+            names = os.listdir(out)
+        except OSError:
+            return os.path.join(out, *list(reversed(parts))[i:])
+        if part not in names:
+            match = [n for n in names if n.lower() == part.lower()]
+            if len(match) == 1:
+                part = match[0]
+        out = os.path.join(out, part)
+    return out
+
+
 def real(p):
-    return os.path.normcase(os.path.realpath(p))
+    p = os.path.normcase(os.path.realpath(p))
+    return true_case(p) if sys.platform == "darwin" else p
 
 
 def inside(p, root):
@@ -137,7 +174,9 @@ def mine(cfg, known):
     owner = cfg["owner"].lower()
     out = set()
     for name, info in known.items():
-        src = (info or {}).get("source") or {}
+        src = info.get("source") or {} if isinstance(info, dict) else {}
+        if not isinstance(src, dict):
+            continue
         kind = src.get("source")
         if kind == "directory":
             out.add(name)
