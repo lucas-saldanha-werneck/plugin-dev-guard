@@ -70,6 +70,26 @@ class Hook(unittest.TestCase):
         self.assertIn("INSTALLED copy of my-cli", msg)
         self.assertIsNone(self.f.bash("echo x >> ~/.local/share/my-cli-src/logs/run.log"))
 
+    def test_rm_parent_folders_of_installed_copies(self):
+        for target in ("~/.claude/plugins/cache", "~/.claude/plugins/cache/",
+                       "~/.claude/plugins/marketplaces", "~/.claude/plugins"):
+            msg = self.f.bash("rm -rf %s" % target)
+            self.assertIsNotNone(msg, target)
+            self.assertIn("INSTALLED copy of", msg)
+
+    def test_rm_parent_folder_with_guard_mine(self):
+        self.f.set_config({"guard": "mine", "marketplaces": ["mine"]})
+        msg = self.f.bash("rm -rf ~/.claude/plugins/cache")
+        self.assertIn("INSTALLED copy of mine", msg)
+        self.assertIsNotNone(self.f.bash("rm -rf ~/.claude/plugins"))
+        # none of my marketplaces below: let through
+        self.f.set_config({"guard": "mine", "marketplaces": ["nobody"]})
+        self.assertIsNone(self.f.bash("rm -rf ~/.claude/plugins/cache"))
+
+    def test_files_next_to_the_plugin_folders_pass(self):
+        self.assertIsNone(self.f.bash("rm -rf ~/.claude/plugins/blocklist.json"))
+        self.assertIsNone(self.f.bash("rm -rf ~/.claude/plugins/data/x"))
+
     def test_tip_is_added(self):
         self.f.set_config({"tip": "Then add a to-do."})
         self.assertTrue(self.f.edit(self.cached("theirs/tool/1.0.0/a")).endswith("Then add a to-do."))
