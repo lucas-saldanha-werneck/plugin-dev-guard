@@ -138,7 +138,9 @@ written to a repo file, or a file read with `grep`, `diff` or `cp` from the inst
 not count.
 
 Each target is checked against the plugins folder (`$CLAUDE_CONFIG_DIR/plugins` when that is
-set, else `~/.claude/plugins`) and your `install_dirs`. On a hit, the hook looks for the local
+set, else `~/.claude/plugins`) and your `install_dirs`. A target that is the plugins folder itself,
+or its `cache/` or `marketplaces/` folder (as in `rm -rf ~/.claude/plugins/cache`), counts as a hit
+when a guarded installed copy is below it. On a hit, the hook looks for the local
 source repo, else for the plugin's repo address (from the marketplace entry, the plugin's own
 `plugin.json`, or the marketplace in `known_marketplaces.json`), and returns
 `permissionDecision: "deny"` with the message above, and notes the file in

@@ -223,6 +223,20 @@ def marketplace_dir(name, known):
     return p if os.path.isdir(p) else None
 
 
+def guarded_below(pd, subs, cfg, known):
+    """Sorted names of the guarded marketplaces with a folder in pd/<sub> for sub in subs."""
+    names = set()
+    for sub in subs:
+        root = os.path.join(pd, sub)
+        try:
+            names.update(n for n in os.listdir(root) if os.path.isdir(os.path.join(root, n)))
+        except OSError:
+            pass
+    if cfg["guard"] == "mine":
+        names &= mine(cfg, known)
+    return sorted(names)
+
+
 def classify(path, cfg, known):
     """What installed copy `path` is in: dict(kind, name, marketplace, root) or None."""
     p = real(path)
@@ -234,6 +248,15 @@ def classify(path, cfg, known):
         if inside(p, real(d)):
             return {"kind": "install", "name": name, "marketplace": None, "root": d}
     pd = real(plugins_dir())
+    # the plugins folder itself, or its cache/ or marketplaces/ folder: deleting or moving it
+    # takes every installed copy below with it
+    subs = {pd: ("cache", "marketplaces"), os.path.join(pd, "cache"): ("cache",),
+            os.path.join(pd, "marketplaces"): ("marketplaces",)}.get(p.rstrip(os.sep) or p)
+    if subs:
+        markets = guarded_below(pd, subs, cfg, known)
+        if not markets:
+            return None
+        return {"kind": "marketplace", "name": markets[0], "marketplace": markets[0], "root": p}
     for sub in ("cache", "marketplaces"):
         root = os.path.join(pd, sub)
         if not inside(p, root):
