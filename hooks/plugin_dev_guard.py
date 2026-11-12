@@ -11,14 +11,27 @@ Only real write targets are judged: Edit/Write file paths, and for Bash the file
 command writes (see shellwrites.py), never a path that only appears in the text.
 
 Exception: Claude asks, the user answers in a new message (UserPromptSubmit, `--prompt`), and Claude
-repeats the same edit: it goes through once. Or Claude touches the pass file (valid pass_minutes). While the
-pass is valid the edit goes through with a reminder: make the same change in the source repo.
-`--seed` (SessionStart) creates the settings file when it is missing.
+repeats the same call in the same session: it goes through once. Creating the pass file follows the same
+rule (Claude cannot give itself a pass); while a pass is valid (pass_minutes) edits to installed copies go
+through with a reminder: make the same change in the source repo. The hook's own state files cannot be
+written by a tool at all. `--seed` (SessionStart) creates the settings file when it is missing.
 """
+import contextlib
+import hashlib
 import json
 import os
 import sys
+import tempfile
 import time
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pdg  # noqa: E402
@@ -46,26 +59,69 @@ def pass_valid(minutes):
         return False
 
 
+def state_dir():
+    return os.path.dirname(pdg.pass_file())
+
+
 def warned_file():
-    return os.path.join(os.path.dirname(pdg.pass_file()), "plugin-dev-guard.warned.json")
+    return os.path.join(state_dir(), "plugin-dev-guard.warned.json")
+
+
+@contextlib.contextmanager
+def state_lock():
+    """One hook at a time reads and rewrites the state files (parallel tool calls run in parallel)."""
+    f = None
+    try:
+        os.makedirs(state_dir(), exist_ok=True)
+        f = open(os.path.join(state_dir(), "plugin-dev-guard.lock"), "a+")
+        if fcntl:
+            fcntl.flock(f, fcntl.LOCK_EX)
+        elif msvcrt:
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+    except OSError:
+        pass
+    try:
+        yield
+    finally:
+        if f:
+            try:
+                if not fcntl and msvcrt:
+                    f.seek(0)
+                    msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+            except OSError:
+                pass
+            f.close()
 
 
 def read_warned(minutes):
-    """Paths Claude was warned about, still inside the pass window: {path: time}."""
+    """Warnings still inside the pass window: {path: {"t": time, "sid": session, "call": key}}."""
     now = time.time()
     data = pdg.read_json(warned_file(), {})
     if not isinstance(data, dict):
         return {}
-    return {p: t for p, t in data.items() if isinstance(t, (int, float)) and now - t < minutes * 60}
+    return {p: w for p, w in data.items() if isinstance(w, dict) and isinstance(w.get("t"), (int, float))
+            and now - w["t"] < minutes * 60}
 
 
 def write_json(path, data):
+    """Atomic: a temp file in the same folder, then os.replace."""
+    tmp = None
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".pdg-")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f)
+        os.replace(tmp, path)
+        tmp = None
     except OSError:
         pass
+    finally:
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 def write_warned(data):
@@ -81,13 +137,14 @@ def record_prompt(data):
     sid = str((data or {}).get("session_id") or "")
     if not sid or not pdg.read_json(warned_file(), {}):
         return
-    seen = pdg.read_json(prompts_file(), {})
-    if not isinstance(seen, dict):
-        seen = {}
-    now = time.time()
-    seen = {s: t for s, t in seen.items() if isinstance(t, (int, float)) and now - t < 86400}
-    seen[sid] = now
-    write_json(prompts_file(), seen)
+    with state_lock():
+        seen = pdg.read_json(prompts_file(), {})
+        if not isinstance(seen, dict):
+            seen = {}
+        now = time.time()
+        seen = {s: t for s, t in seen.items() if isinstance(t, (int, float)) and now - t < 86400}
+        seen[sid] = now
+        write_json(prompts_file(), seen)
 
 
 def answered_since(sid, since):
@@ -95,6 +152,58 @@ def answered_since(sid, since):
     seen = pdg.read_json(prompts_file(), {})
     t = seen.get(sid) if isinstance(seen, dict) and sid else None
     return isinstance(t, (int, float)) and t > since
+
+
+def call_key(tool, inp):
+    """What makes two tool calls "the same": the command for Bash, else the whole input (without a
+    description). Stored as a short hash."""
+    if not isinstance(inp, dict):
+        inp = {"input": inp}
+    what = {"command": inp.get("command")} if tool == "Bash" else {k: v for k, v in inp.items() if k != "description"}
+    raw = json.dumps({"tool": tool, "input": what}, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def pass_command():
+    pf = pdg.pass_file()
+    return 'mkdir -p "%s" && touch "%s"' % (os.path.dirname(pf).replace(os.sep, "/"), pf.replace(os.sep, "/"))
+
+
+def same_file(a, b):
+    return pdg.real(a) == pdg.real(b)
+
+
+def state_files():
+    return [warned_file(), prompts_file(), os.path.join(state_dir(), "plugin-dev-guard.lock")]
+
+
+def mentions_guarded(data, cfg):
+    """The raw tool input names the plugins folder or an install dir (used when it cannot be parsed)."""
+    text = json.dumps(data.get("tool_input"), default=str).replace("\\\\", "/").lower()
+    needles = [".claude/plugins", pdg.plugins_dir().replace(os.sep, "/").lower()]
+    needles += [d.replace(os.sep, "/").lower() for d in pdg.install_dirs(cfg).values()]
+    return any(n and n in text for n in needles)
+
+
+def deny(reason):
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": reason}}))
+
+
+def allow_with(note):
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "additionalContext": note}}))
+
+
+def pass_message(cfg):
+    return ("plugin-dev-guard: this creates or changes the plugin-dev-guard pass file (%s). A pass lets every "
+            "edit to an installed plugin copy through for %g minutes, so Claude may not give itself one. End your "
+            "turn and ask the user, saying what you want to change and why. Only after the user answers yes in a "
+            "new message, run the SAME command again: it goes through once."
+            % (pdg.pass_file().replace(os.sep, "/"), cfg["pass_minutes"]))
 
 
 def message(hits, cfg, known):
@@ -117,13 +226,12 @@ def message(hits, cfg, known):
             lines.append("- %s: no local source repo found. Clone or fork %s, make the change there "
                          "and open a pull request to its author. Never patch the installed copy."
                          % (h["name"], where))
-    pf = pdg.pass_file()
     lines.append("Exception (a quick test or one-off fix): end your turn and ask the user, saying what this changes. "
-                 "Only after the user answers yes in a new message, make the SAME edit again: it goes through once "
-                 "(within %g minutes). A repeat before the user's next message is blocked again. For several files "
-                 "at once, run "
-                 "`mkdir -p \"%s\" && touch \"%s\"` instead (a pass for every installed copy, same time limit)."
-                 % (cfg["pass_minutes"], os.path.dirname(pf).replace(os.sep, "/"), pf.replace(os.sep, "/")))
+                 "Only after the user answers yes in a new message, make the SAME edit again in this session: it goes "
+                 "through once (within %g minutes). A repeat before the user's next message is blocked again. For "
+                 "several files at once, ask for a pass instead and, after the user's yes, run "
+                 "`%s` (a pass for every installed copy, same time limit)."
+                 % (cfg["pass_minutes"], pass_command()))
     if cfg["tip"].strip():
         lines.append(cfg["tip"].strip())
     return "\n".join(lines)
@@ -168,13 +276,25 @@ def main():
     if "--prompt" in sys.argv:
         record_prompt(data)
         return
+    cfg = pdg.load_config()
     try:
-        paths = [p for p in write_targets(data) if p]
+        decide(data, cfg)
     except Exception:
-        return
+        # Input or a file the hook cannot read: refuse only a call that names a guarded folder.
+        if mentions_guarded(data, cfg):
+            deny("plugin-dev-guard: could not read this tool call, and it names the plugins folder or an "
+                 "install dir, so it is refused to be safe. Write it in a plain form (a string command, or a "
+                 "file path), or make the change in the plugin's source repo.")
+
+
+def decide(data, cfg):
+    paths = [p for p in write_targets(data) if p]
     if not paths:
         return
-    cfg = pdg.load_config()
+    if any(same_file(p, f) for p in paths for f in state_files()):
+        deny("plugin-dev-guard: tools may not write the hook's own state files in %s (warnings, answers, "
+             "lock); the hook keeps them itself." % state_dir().replace(os.sep, "/"))
+        return
     known = pdg.known_marketplaces()
     mine = pdg.mine(cfg, known)
     hits = []
@@ -186,30 +306,42 @@ def main():
             continue
         h["path"] = p
         hits.append(h)
-    if not hits:
-        return
-    warned = read_warned(cfg["pass_minutes"])
-    paths = [h["path"] for h in hits]
-    if pass_valid(cfg["pass_minutes"]):
-        write_warned({p: t for p, t in warned.items() if p not in paths})
-        print(json.dumps({"hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "additionalContext": reminder(hits, cfg, known)}}))
+    pf = pdg.pass_file()
+    wants_pass = any(same_file(p, pf) for p in paths)
+    if not hits and not wants_pass:
         return
     sid = str(data.get("session_id") or "")
-    if all(p in warned for p in paths) and answered_since(sid, max(warned[p] for p in paths)):
-        # the same edit again, after a message from the user that came after the warning
-        write_warned({p: t for p, t in warned.items() if p not in paths})
-        print(json.dumps({"hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "additionalContext": reminder(hits, cfg, known, "the repeat after the user's answer")}}))
-        return
-    warned.update({p: warned.get(p) or time.time() for p in paths})
-    write_warned(warned)
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "deny",
-        "permissionDecisionReason": message(hits, cfg, known)}}))
+    tool = data.get("tool_name", "")
+    key = call_key(tool, data.get("tool_input"))
+    guarded = [h["path"] for h in hits] + ([pf] if wants_pass else [])
+    with state_lock():
+        warned = read_warned(cfg["pass_minutes"])
+        rest = {p: w for p, w in warned.items() if p not in guarded}
+        if not wants_pass and pass_valid(cfg["pass_minutes"]):
+            write_json(warned_file(), rest)
+            allow_with(reminder(hits, cfg, known))
+            return
+        same = all(p in warned and warned[p].get("sid") == sid and warned[p].get("call") == key for p in guarded)
+        if sid and same and answered_since(sid, max(warned[p]["t"] for p in guarded)):
+            # the same call again, in the same session, after a message from the user
+            write_json(warned_file(), rest)
+            if hits:
+                allow_with(reminder(hits, cfg, known, "the repeat after the user's answer"))
+            else:
+                allow_with("plugin-dev-guard: pass allowed after the user's answer. It lets edits to every "
+                           "installed copy through for %g minutes; still make each change in the source repo."
+                           % cfg["pass_minutes"])
+            return
+        now = time.time()
+        for p in guarded:
+            w = warned.get(p)
+            keep = w and w.get("sid") == sid and w.get("call") == key
+            warned[p] = {"t": w["t"] if keep else now, "sid": sid, "call": key}
+        if hits and not wants_pass:
+            # after the user's yes, the pass command from the message goes through once too
+            warned[pf] = {"t": now, "sid": sid, "call": call_key("Bash", {"command": pass_command()})}
+        write_json(warned_file(), warned)
+    deny(message(hits, cfg, known) if hits else pass_message(cfg))
 
 
 if __name__ == "__main__":

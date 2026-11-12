@@ -67,6 +67,16 @@ class Check(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("1 tracked file(s) edited in the install dir", out)
 
+    def test_every_installation_is_checked(self):  # PDG-04
+        cache = os.path.join(self.f.plugins, "cache", "mine", "myplug", "0.1.0")
+        write(os.path.join(self.f.plugins, "installed_plugins.json"), {"version": 2, "plugins": {
+            "myplug@mine": [{"scope": "user", "version": "0.1.0", "gitCommitSha": self.head, "installPath": cache},
+                            {"scope": "project", "version": "0.1.0", "gitCommitSha": self.first,
+                             "installPath": cache, "projectPath": "/p"}]}})
+        code, out = self.f.check()
+        self.assertEqual(code, 1, out)
+        self.assertIn("behind main by 1", out)
+
     def test_no_sources(self):
         self.f.set_config({})
         code, out = self.f.check()

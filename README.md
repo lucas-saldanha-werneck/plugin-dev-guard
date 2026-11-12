@@ -20,7 +20,7 @@ tool error instead:
 ```
 plugin-dev-guard: this changes the INSTALLED copy of give-up-guard (~/.claude/plugins/cache/lucas-tools/give-up-guard/0.3.1/hooks/guard.py). That copy is replaced on the next plugin update, so the change would be lost.
 - give-up-guard: its source repo is on this machine: ~/code/give-up-guard. Make the change there (branch, commit, bump the version in .claude-plugin/plugin.json, push), then update the installed plugin from it.
-Exception (a quick test or one-off fix): end your turn and ask the user, saying what this changes. Only after the user answers yes in a new message, make the SAME edit again: it goes through once (within 30 minutes). A repeat before the user's next message is blocked again. For several files at once, run `mkdir -p "~/.claude/state" && touch "~/.claude/state/plugin-dev-guard.pass"` instead (a pass for every installed copy, same time limit).
+Exception (a quick test or one-off fix): end your turn and ask the user, saying what this changes. Only after the user answers yes in a new message, make the SAME edit again in this session: it goes through once (within 30 minutes). A repeat before the user's next message is blocked again. For several files at once, ask for a pass instead and, after the user's yes, run `mkdir -p "$HOME/.claude/state" && touch "$HOME/.claude/state/plugin-dev-guard.pass"` (a pass for every installed copy, same time limit).
 ```
 
 For a plugin with no local source repo (someone else's, or yours on another machine), the
@@ -30,7 +30,7 @@ line points to its repo instead:
 - superpowers: no local source repo found. Clone or fork https://github.com/obra/superpowers, make the change there and open a pull request to its author. Never patch the installed copy.
 ```
 
-(The real message shows full paths; `~` is used here for short lines.)
+(The real message shows full paths; `~` and `$HOME` are used here for short lines.)
 
 `plugin-dev-check` in a terminal:
 
@@ -144,13 +144,20 @@ when a guarded installed copy is below it. On a hit, the hook looks for the loca
 source repo, else for the plugin's repo address (from the marketplace entry, the plugin's own
 `plugin.json`, or the marketplace in `known_marketplaces.json`), and returns
 `permissionDecision: "deny"` with the message above, and notes the file in
-`~/.claude/state/plugin-dev-guard.warned.json`. A UserPromptSubmit hook notes when you send a message
-in that session (`plugin-dev-guard.prompts.json`, only while a warning waits). The same edit made again
-within `pass_minutes`, after a message from you that came after the warning, goes through once; so does any edit while a pass file younger than `pass_minutes`
-exists. Either way the call goes through, and Claude is told what it just edited: when the plugin's source repo is
+`~/.claude/state/plugin-dev-guard.warned.json` with the session and a hash of the call. A UserPromptSubmit
+hook notes when you send a message in that session (`plugin-dev-guard.prompts.json`, only while a warning
+waits). The same call made again in the same session within `pass_minutes`, after a message from you that
+came after the warning, goes through once; so does any edit while a pass file younger than `pass_minutes`
+exists. Claude cannot give itself a pass: a tool call that writes the pass file follows the same rule (it
+goes through only as the repeat after your answer), and tool calls that write the hook's state files
+(`warned.json`, `prompts.json`, the lock file) are always refused. A pass file you create yourself in a
+terminal counts as usual. The state files are written atomically under a lock, so parallel tool calls do
+not lose each other's warnings. Either way the call goes through, and Claude is told what it just edited: when the plugin's source repo is
 on this machine, to make the same change there too; otherwise, that the change lasts only until
 the next update and where to open a pull request. Your `tip` is added to that reminder as well.
-Input it can't parse, and other tools, pass untouched.
+Other tools pass untouched. Input it can't parse is refused only when its raw text names the plugins
+folder or one of your `install_dirs`; otherwise it passes. On macOS, paths are matched without regard
+to letter case, like the file system.
 
 ## Uninstall
 
@@ -170,7 +177,8 @@ Your settings file stays; delete `~/.config/plugin-dev-guard/` if you want it go
 - `cd` inside a subshell or `$(...)` still changes the folder used for the commands after it.
 - Commands that write through stdin lists (`... | xargs rm`) are judged only on the paths
   written in the command.
-- The pass file opens every installed copy, not only the one you approved, until it expires.
+- The pass file opens every installed copy, not only the one you approved, in every session, until it
+  expires.
 - The hook sees that you sent a message after the warning, not what it says: a plugin that submits a prompt
   in your place also counts as an answer.
 - Tested on macOS in the terminal CLI. The tests also run on Linux and Windows in CI, but I

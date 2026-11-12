@@ -39,6 +39,27 @@ def dirty_count(d, tracked_only=False):
     return len([x for x in git(d, *args).splitlines() if x.strip()])
 
 
+def install_state(name, repo, key, info, known, main_sha):
+    """(state, fix line or None) of one installation of the repo's plugin."""
+    sha = info.get("gitCommitSha", "")
+    ipath = info.get("installPath", "")
+    ksrc = (known.get(key.split("@", 1)[-1]) or {}).get("source") or {}
+    in_cache = os.sep + "cache" + os.sep in os.path.normpath(ipath)
+    if ksrc.get("source") == "directory" and ksrc.get("path") and pdg.real(ksrc["path"]) == pdg.real(repo):
+        return "runs from repo (in place)", None
+    if not in_cache:
+        return ("runs from repo" if ipath and pdg.real(ipath) == pdg.real(repo) else "in place: %s" % short(ipath)), None
+    if not sha:
+        return "no sha recorded", None
+    if main_sha and sha != main_sha:
+        behind = git(repo, "rev-list", "--count", "%s..%s" % (sha, main_sha))
+        return ("behind main by %s" % (behind or "?"),
+                "%s: installed copy %s is behind main %s (bump the version, then "
+                "`claude plugin marketplace update %s` and `claude plugin update %s`)"
+                % (name, sha[:7], main_sha[:7], key.split("@", 1)[-1], key))
+    return "= main", None
+
+
 def main(argv):
     fetch, md = "--fetch" in argv, "--md" in argv
     if "-h" in argv or "--help" in argv:
@@ -65,33 +86,25 @@ def main(argv):
         inst, state = "-", ""
         pn = pdg.plugin_name(repo)
         cat = pdg.catalog(repo)
-        hits = [(k, v[0]) for k, v in installed.items()
-                if pn and k.split("@")[0] == pn and isinstance(v, list) and v and isinstance(v[0], dict)]
+        # every installation (one per scope), not only the first
+        hits = [(k, one) for k, v in installed.items()
+                if pn and k.split("@")[0] == pn and isinstance(v, list) for one in v if isinstance(one, dict)]
         hits.sort(key=lambda kv: kv[0].split("@", 1)[-1] not in mine)
         mname = cat.get("name")
         msrc = (known.get(mname) or {}).get("source") or {} if mname else {}
         if hits:
+            states = []
+            for key, info in hits:
+                st, fx = install_state(name, repo, key, info, known, main_sha)
+                states.append((info.get("scope", "?"), st))
+                if fx and fx not in fix:
+                    fix.append(fx)
             key, info = hits[0]
-            inst = "%s %s" % (key, info.get("version", "?"))
-            sha = info.get("gitCommitSha", "")
-            ipath = info.get("installPath", "")
-            ksrc = (known.get(key.split("@", 1)[-1]) or {}).get("source") or {}
-            in_cache = os.sep + "cache" + os.sep in os.path.normpath(ipath)
-            if ksrc.get("source") == "directory" and ksrc.get("path") and \
-                    pdg.real(ksrc["path"]) == pdg.real(repo):
-                state = "runs from repo (in place)"
-            elif not in_cache:
-                state = "runs from repo" if ipath and pdg.real(ipath) == pdg.real(repo) else "in place: %s" % short(ipath)
-            elif not sha:
-                state = "no sha recorded"
-            elif main_sha and sha != main_sha:
-                behind = git(repo, "rev-list", "--count", "%s..%s" % (sha, main_sha))
-                state = "behind main by %s" % (behind or "?")
-                fix.append("%s: installed copy %s is behind main %s (bump the version, then "
-                           "`claude plugin marketplace update %s` and `claude plugin update %s`)"
-                           % (name, sha[:7], main_sha[:7], key.split("@", 1)[-1], key))
+            inst = "%s %s" % (key, info.get("version", "?")) + (" (+%d)" % (len(hits) - 1) if len(hits) > 1 else "")
+            if len({st for _, st in states}) == 1:
+                state = states[0][1]
             else:
-                state = "= main"
+                state = "; ".join("%s: %s" % (scope, st) for scope, st in states)
         elif mname and mname in known and msrc.get("source") != "directory" and \
                 pdg.marketplace_dir(mname, known) and \
                 os.path.exists(os.path.join(pdg.marketplace_dir(mname, known), ".git")):
