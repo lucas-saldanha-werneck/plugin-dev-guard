@@ -77,8 +77,17 @@ def state_lock():
         if fcntl:
             fcntl.flock(f, fcntl.LOCK_EX)
         elif msvcrt:
+            # LK_LOCK gives up after 10 tries a second apart; keep trying for up to 20 s instead.
             f.seek(0)
-            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+            end = time.time() + 20
+            while True:
+                try:
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    if time.time() > end:
+                        raise
+                    time.sleep(0.01)
     except OSError:
         pass
     try:
@@ -112,7 +121,16 @@ def write_json(path, data):
         fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".pdg-")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f)
-        os.replace(tmp, path)
+        for attempt in range(100):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                # Windows: another handle on the file (a reader, a virus scanner) blocks the
+                # replace for a moment.
+                if os.name != "nt" or attempt == 99:
+                    raise
+                time.sleep(0.02)
         tmp = None
     except OSError:
         pass
