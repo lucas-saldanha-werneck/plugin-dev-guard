@@ -8,6 +8,16 @@ A Claude Code hook that stops Claude from editing the installed copy of a plugin
 it where the change belongs: your source repo when you have one on this machine, or a clone
 or fork of the plugin's repo and a pull request to its author.
 
+[![plugin-dev-guard demo: tap to open the video](https://github.com/user-attachments/assets/1fc5f8ef-47ca-4ec1-a24b-875e1d52f11d)](https://lucas-saldanha-werneck.github.io/plugin-dev-guard/demo.mp4)
+
+<table>
+<tr>
+<td align="center"><img src="https://github.com/user-attachments/assets/1e5f66ef-382d-44a0-8e2b-a90db8153e11" alt="An edit to the installed copy is blocked" width="320"><br>An edit to the installed copy is blocked</td>
+<td align="center"><img src="https://github.com/user-attachments/assets/c11e9777-4acf-4dce-a3ab-17f159042e62" alt="The fix goes to your source repo" width="320"><br>The fix goes to your source repo</td>
+<td align="center"><img src="https://github.com/user-attachments/assets/08a9bad5-965b-45fe-9758-a1ebfab331ff" alt="Someone else's plugin: fork and PR" width="320"><br>Someone else's plugin: fork and PR</td>
+</tr>
+</table>
+
 Claude Code runs plugins from a copy under `~/.claude/plugins/cache/` (and keeps catalog
 clones under `~/.claude/plugins/marketplaces/`). The next plugin update replaces that copy,
 so a fix made there is lost, and nobody else ever gets it. Claude still edits it often,
