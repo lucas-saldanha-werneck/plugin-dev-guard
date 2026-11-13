@@ -12,7 +12,7 @@ because that is the file it saw running.
 The plugin also ships `plugin-dev-check`, a command that lists your source repos next to
 their installed copies and says which ones are out of step.
 
-## Example
+## Examples
 
 Claude tries to edit a hook inside the installed copy. The edit is not made; Claude gets this
 tool error instead:
