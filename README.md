@@ -1,5 +1,9 @@
 # plugin-dev-guard
 
+[![CI](https://github.com/lucas-saldanha-werneck/plugin-dev-guard/actions/workflows/test.yml/badge.svg)](https://github.com/lucas-saldanha-werneck/plugin-dev-guard/actions/workflows/test.yml)
+[![License](https://img.shields.io/github/license/lucas-saldanha-werneck/plugin-dev-guard)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.2.4-blue)](CHANGELOG.md)
+
 A Claude Code hook that stops Claude from editing the installed copy of a plugin, and tells
 it where the change belongs: your source repo when you have one on this machine, or a clone
 or fork of the plugin's repo and a pull request to its author.
@@ -198,3 +202,7 @@ Ubuntu, macOS and Windows.
 MIT. See [LICENSE](LICENSE).
 
 Built with Claude Code
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for what this plugin accesses and how to report a vulnerability.
