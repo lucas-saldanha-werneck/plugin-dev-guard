@@ -3,6 +3,7 @@
 [![CI](https://github.com/lucas-saldanha-werneck/plugin-dev-guard/actions/workflows/test.yml/badge.svg)](https://github.com/lucas-saldanha-werneck/plugin-dev-guard/actions/workflows/test.yml)
 [![License](https://img.shields.io/github/license/lucas-saldanha-werneck/plugin-dev-guard)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.2.4-blue)](CHANGELOG.md)
+[![plugin score (proposal)](https://img.shields.io/badge/plugin%20score%20(proposal)-97.5%20A-brightgreen)](https://github.com/NVIDIA/SkillEvaluator/issues/508)
 
 A Claude Code hook that stops Claude from editing the installed copy of a plugin, and tells
 it where the change belongs: your source repo when you have one on this machine, or a clone
